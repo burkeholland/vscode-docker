@@ -10,8 +10,9 @@ import * as fse from 'fs-extra';
 import * as path from 'path';
 import { Suite } from 'mocha';
 import { PlatformOS, Platform, ext, configure, ConfigureTelemetryProperties, ConfigureApiOptions, globAsync } from '../extension.bundle';
-import { TestUserInput, IActionContext, TelemetryProperties, TestInput } from 'vscode-azureextensionui';
-import { getTestRootFolder, testInEmptyFolder } from './global.test';
+import { IActionContext, TelemetryProperties } from 'vscode-azureextensionui';
+import { getTestRootFolder, testInEmptyFolder, testUserInput } from './global.test';
+import { TestInput } from 'vscode-azureextensiondev';
 
 // Can be useful for testing
 const outputAllGeneratedFileContents = false;
@@ -64,9 +65,9 @@ async function readFile(pathRelativeToTestRootFolder: string): Promise<string> {
 }
 
 async function testConfigureDockerViaApi(options: ConfigureApiOptions, inputs: (string | TestInput)[] = [], expectedOutputFiles?: string[]): Promise<void> {
-    ext.ui = new TestUserInput(inputs);
-    await vscode.commands.executeCommand('vscode-docker.api.configure', options);
-    assert.equal(inputs.length, 0, 'Not all inputs were used.');
+    await testUserInput.runWithInputs(inputs, async () => {
+        await vscode.commands.executeCommand('vscode-docker.api.configure', options);
+    });
 
     if (expectedOutputFiles) {
         let projectFiles = await getFilesInProject();
@@ -118,15 +119,14 @@ async function getFilesInProject(): Promise<string[]> {
 async function testConfigureDocker(platform: Platform, expectedTelemetryProperties?: ConfigureTelemetryProperties, inputs: (string | TestInput)[] = [], expectedOutputFiles?: string[]): Promise<void> {
     // Set up simulated user input
     inputs.unshift(platform);
-    const ui: TestUserInput = new TestUserInput(inputs);
-    ext.ui = ui;
     let context: IActionContext = {
         telemetry: { properties: {}, measurements: {} },
         errorHandling: {}
     };
 
-    await configure(context, testRootFolder);
-    assert.equal(inputs.length, 0, 'Not all inputs were used.');
+    await testUserInput.runWithInputs(inputs, async () => {
+        await configure(context, testRootFolder);
+    });
 
     if (expectedOutputFiles) {
         let projectFiles = await getFilesInProject();
@@ -624,14 +624,14 @@ suite("Configure (Add Docker files to Workspace)", function (this: Suite): void 
                     RUN dotnet restore "ConsoleApp1Folder/ConsoleApp1.csproj"
                     COPY . .
                     WORKDIR "/src/ConsoleApp1Folder"
-                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app/build
 
                     FROM build AS publish
-                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app/publish
 
                     FROM base AS final
                     WORKDIR /app
-                    COPY --from=publish /app .
+                    COPY --from=publish /app/publish .
                     ENTRYPOINT ["dotnet", "ConsoleApp1.dll"]
                 `));
 
@@ -656,14 +656,14 @@ suite("Configure (Add Docker files to Workspace)", function (this: Suite): void 
                     RUN dotnet restore "ConsoleApp1Folder/ConsoleApp1.csproj"
                     COPY . .
                     WORKDIR "/src/ConsoleApp1Folder"
-                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app/build
 
                     FROM build AS publish
-                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app/publish
 
                     FROM base AS final
                     WORKDIR /app
-                    COPY --from=publish /app .
+                    COPY --from=publish /app/publish .
                     ENTRYPOINT ["dotnet", "ConsoleApp1.dll"]
                 `));
 
@@ -693,14 +693,14 @@ suite("Configure (Add Docker files to Workspace)", function (this: Suite): void 
                     RUN dotnet restore "subfolder/projectFolder/ConsoleApp1.csproj"
                     COPY . .
                     WORKDIR "/src/subfolder/projectFolder"
-                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app/build
 
                     FROM build AS publish
-                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app/publish
 
                     FROM base AS final
                     WORKDIR /app
-                    COPY --from=publish /app .
+                    COPY --from=publish /app/publish .
                     ENTRYPOINT ["dotnet", "ConsoleApp1.dll"]
                 `));
 
@@ -725,14 +725,14 @@ suite("Configure (Add Docker files to Workspace)", function (this: Suite): void 
                     RUN dotnet restore "subfolder/projectFolder/ConsoleApp1.csproj"
                     COPY . .
                     WORKDIR "/src/subfolder/projectFolder"
-                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet build "ConsoleApp1.csproj" -c Release -o /app/build
 
                     FROM build AS publish
-                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app
+                    RUN dotnet publish "ConsoleApp1.csproj" -c Release -o /app/publish
 
                     FROM base AS final
                     WORKDIR /app
-                    COPY --from=publish /app .
+                    COPY --from=publish /app/publish .
                     ENTRYPOINT ["dotnet", "ConsoleApp1.dll"]
                 `));
 
@@ -847,14 +847,14 @@ suite("Configure (Add Docker files to Workspace)", function (this: Suite): void 
                     RUN dotnet restore "AspNetApp1/project1.csproj"
                     COPY . .
                     WORKDIR "/src/AspNetApp1"
-                    RUN dotnet build "project1.csproj" -c Release -o /app
+                    RUN dotnet build "project1.csproj" -c Release -o /app/build
 
                     FROM build AS publish
-                    RUN dotnet publish "project1.csproj" -c Release -o /app
+                    RUN dotnet publish "project1.csproj" -c Release -o /app/publish
 
                     FROM base AS final
                     WORKDIR /app
-                    COPY --from=publish /app .
+                    COPY --from=publish /app/publish .
                     ENTRYPOINT ["dotnet", "project1.dll"]
                 `));
         });
@@ -878,14 +878,14 @@ suite("Configure (Add Docker files to Workspace)", function (this: Suite): void 
                     RUN dotnet restore "project2/project2.csproj"
                     COPY . .
                     WORKDIR "/src/project2"
-                    RUN dotnet build "project2.csproj" -c Release -o /app
+                    RUN dotnet build "project2.csproj" -c Release -o /app/build
 
                     FROM build AS publish
-                    RUN dotnet publish "project2.csproj" -c Release -o /app
+                    RUN dotnet publish "project2.csproj" -c Release -o /app/publish
 
                     FROM base AS final
                     WORKDIR /app
-                    COPY --from=publish /app .
+                    COPY --from=publish /app/publish .
                     ENTRYPOINT ["dotnet", "project2.dll"]
                 `));
         });
