@@ -482,28 +482,10 @@
                 "label": "Docker: Launch .NET Core (Preview)",
                 "configurationSnippets": [
                     {
-                        "label": "Docker: Launch ASP.NET Core (Preview)",
-                        "description": "Docker: Launch ASP.NET Core (Preview)",
+                        "label": "Docker: Launch .NET Core (Preview)",
+                        "description": "Docker: Launch .NET Core (Preview)",
                         "body": {
-                            "name": "Docker: Launch ASP.NET Core (Preview)",
-                            "type": "docker-coreclr",
-                            "request": "launch",
-                            "preLaunchTask": "build",
-                            "dockerBuild": {},
-                            "dockerRun": {
-                                "env": {
-                                    "ASPNETCORE_ENVIRONMENT": "Development",
-                                    "ASPNETCORE_URLS": "http://+:80;https://+:443"
-                                }
-                            },
-                            "configureSslCertificate": true
-                        }
-                    },
-                    {
-                        "label": "Docker: Launch .NET Core Console (Preview)",
-                        "description": "Docker: Launch .NET Core Console (Preview)",
-                        "body": {
-                            "name": "Docker: Launch .NET Core Console (Preview)",
+                            "name": "Docker: Launch .NET Core (Preview)",
                             "type": "docker-coreclr",
                             "request": "launch",
                             "preLaunchTask": "build",
@@ -1131,6 +1113,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Run docker-compose with the --d (detached) argument, defaults to true"
+                },
+                "docker.promptToTrustAspNetCoreCertificate": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Prompt to trust the ASP.NET Core HTTPS development certificate, if necessary"
                 }
             }
         },

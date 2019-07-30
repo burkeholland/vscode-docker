@@ -9,10 +9,10 @@ import { PlatformOS } from '../../utils/platform';
 import { AppStorageProvider } from './appStorage';
 import { ProcessProvider } from './ChildProcessProvider';
 import { DockerBuildImageOptions, DockerClient, DockerContainerVolume, DockerRunContainerOptions } from "./CliDockerClient";
-import { DotNetClient } from './CommandLineDotNetClient';
 import { DebuggerClient } from './debuggerClient';
 import { FileSystemProvider } from './fsProvider';
-import Lazy from './lazy';
+import { Lazy } from './lazy';
+import { AspNetCoreSslManager } from './LocalAspNetCoreSslManager';
 import { OSProvider } from './LocalOSProvider';
 import { OutputManager } from './outputManager';
 
@@ -130,7 +130,7 @@ export class DefaultDockerManager implements DockerManager {
         private readonly appCacheFactory: AppStorageProvider,
         private readonly debuggerClient: DebuggerClient,
         private readonly dockerClient: DockerClient,
-        private readonly dotNetClient: DotNetClient,
+        private readonly aspNetCoreSslManager: AspNetCoreSslManager,
         private readonly dockerOutputManager: OutputManager,
         private readonly fileSystemProvider: FileSystemProvider,
         private readonly osProvider: OSProvider,
@@ -245,8 +245,9 @@ export class DefaultDockerManager implements DockerManager {
 
         if (options.run.configureSslCertificate) {
             const appOutputName = this.osProvider.pathParse(options.run.os, options.appOutput).name;
-            const hostCertificateExportPfxPath = path.join(this.getHostSecretsPaths().hostCertificateExportPath, `${appOutputName}.pfx`);
-            await this.dotNetClient.trustAndExportSslCertificate(options.appProject, hostCertificateExportPfxPath);
+            const certificateExportPath = path.join(this.aspNetCoreSslManager.getHostSecretsFolders().certificateFolder, `${appOutputName}.pfx`);
+            await this.aspNetCoreSslManager.trustCertificateIfNecessary();
+            await this.aspNetCoreSslManager.exportCertificateIfNecessary(options.appProject, certificateExportPath);
         }
 
         const containerId = await this.runContainer(imageId, { appFolder: options.appFolder, ...options.run });
@@ -347,7 +348,6 @@ export class DefaultDockerManager implements DockerManager {
     }
 
     private static readonly ProgramFilesEnvironmentVariable: string = 'ProgramFiles';
-    private static readonly AppDataEnvironmentVariable: string = 'AppData';
 
     private getVolumes(debuggerFolder: string, options: DockerManagerRunContainerOptions): DockerContainerVolume[] {
         const appVolume: DockerContainerVolume = {
@@ -393,18 +393,18 @@ export class DefaultDockerManager implements DockerManager {
         ];
 
         if (options.configureSslCertificate) {
-            const { hostCertificateExportPath, hostUserSecretsPath } = this.getHostSecretsPaths();
-            const { containerCertificateExportPath, containerUserSecretsPath } = this.getContainerSecretsPaths(options.os);
+            const hostSecretsFolders = this.aspNetCoreSslManager.getHostSecretsFolders();
+            const containerSecretsFolders = this.aspNetCoreSslManager.getContainerSecretsFolders(options.os);
 
             const certVolume: DockerContainerVolume = {
-                localPath: hostCertificateExportPath,
-                containerPath: containerCertificateExportPath,
+                localPath: hostSecretsFolders.certificateFolder,
+                containerPath: containerSecretsFolders.certificateFolder,
                 permissions: 'ro'
             };
 
             const userSecretsVolume: DockerContainerVolume = {
-                localPath: hostUserSecretsPath,
-                containerPath: containerUserSecretsPath,
+                localPath: hostSecretsFolders.userSecretsFolder,
+                containerPath: containerSecretsFolders.userSecretsFolder,
                 permissions: 'ro'
             };
 
@@ -413,37 +413,5 @@ export class DefaultDockerManager implements DockerManager {
         }
 
         return volumes;
-    }
-
-    private getHostSecretsPaths(): { hostCertificateExportPath: string, hostUserSecretsPath: string } {
-        let appDataEnvironmentVariable: string | undefined;
-
-        if (this.osProvider.os === 'Windows') {
-            appDataEnvironmentVariable = this.processProvider.env[DefaultDockerManager.AppDataEnvironmentVariable];
-
-            if (appDataEnvironmentVariable === undefined) {
-                throw new Error(`The environment variable '${DefaultDockerManager.AppDataEnvironmentVariable}' is not defined. This variable is used to locate the HTTPS certificate and user secrets folders.`);
-            }
-        }
-
-        return {
-            hostCertificateExportPath: this.osProvider.os === 'Windows' ?
-                path.join(appDataEnvironmentVariable, 'ASP.NET', 'Https') :
-                path.join(this.osProvider.homedir, '.aspnet', 'https'),
-            hostUserSecretsPath: this.osProvider.os === 'Windows' ?
-                path.join(appDataEnvironmentVariable, 'Microsoft', 'UserSecrets') :
-                path.join(this.osProvider.homedir, '.microsoft', 'usersecrets'),
-        };
-    }
-
-    private getContainerSecretsPaths(os: PlatformOS): { containerCertificateExportPath: string, containerUserSecretsPath: string } {
-        return {
-            containerCertificateExportPath: os === 'Windows' ?
-                'C:\\Users\\ContainerUser\\AppData\\Roaming\\ASP.NET\\Https' :
-                '/root/.aspnet/https',
-            containerUserSecretsPath: os === 'Windows' ?
-                'C:\\Users\\ContainerUser\\AppData\\Roaming\\Microsoft\\UserSecrets' :
-                '/root/.microsoft/usersecrets',
-        };
     }
 }

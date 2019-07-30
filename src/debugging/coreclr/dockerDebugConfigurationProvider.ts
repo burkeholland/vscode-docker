@@ -72,22 +72,7 @@ export class DockerDebugConfigurationProvider implements DebugConfigurationProvi
     public provideDebugConfigurations(folder: WorkspaceFolder | undefined, token?: CancellationToken): ProviderResult<DebugConfiguration[]> {
         return [
             {
-                name: 'Docker: Launch ASP.NET Core (Preview)',
-                type: 'docker-coreclr',
-                request: 'launch',
-                preLaunchTask: 'build',
-                dockerBuild: {},
-                dockerRun: {
-                    env: {
-                        "ASPNETCORE_ENVIRONMENT": "Development",
-                        //tslint:disable-next-line:no-http-string
-                        "ASPNETCORE_URLS": "http://+:80;https://+:443"
-                    }
-                },
-                configureSslCertificate: true
-            },
-            {
-                name: 'Docker: Launch .NET Core Console (Preview)',
+                name: 'Docker: Launch .NET Core (Preview)',
                 type: 'docker-coreclr',
                 request: 'launch',
                 preLaunchTask: 'build',
@@ -123,9 +108,10 @@ export class DockerDebugConfigurationProvider implements DebugConfigurationProvi
             : 'Linux';
 
         const appOutput = await this.inferAppOutput(debugConfiguration, os, resolvedAppProject);
+        const ssl = await this.inferSsl(debugConfiguration, resolvedAppProject);
 
         const buildOptions = await this.inferBuildOptions(folder, debugConfiguration, appFolder, resolvedAppFolder, appName);
-        const runOptions = DockerDebugConfigurationProvider.inferRunOptions(folder, debugConfiguration, appName, os);
+        const runOptions = DockerDebugConfigurationProvider.inferRunOptions(folder, debugConfiguration, appName, os, ssl);
 
         const launchOptions = {
             appFolder: resolvedAppFolder,
@@ -178,12 +164,19 @@ export class DockerDebugConfigurationProvider implements DebugConfigurationProvi
         };
     }
 
-    private static inferRunOptions(folder: WorkspaceFolder, debugConfiguration: DockerDebugConfiguration, appName: string, os: PlatformOS): LaunchRunOptions {
+    private static inferRunOptions(folder: WorkspaceFolder, debugConfiguration: DockerDebugConfiguration, appName: string, os: PlatformOS, ssl: boolean): LaunchRunOptions {
         debugConfiguration.dockerRun = debugConfiguration.dockerRun || {};
 
         const envFiles = debugConfiguration.dockerRun.envFiles
             ? debugConfiguration.dockerRun.envFiles.map(file => DockerDebugConfigurationProvider.resolveFolderPath(file, folder))
             : undefined;
+
+        if (ssl) {
+            debugConfiguration.dockerRun.env = debugConfiguration.dockerRun.env || {};
+            debugConfiguration.dockerRun.env.ASPNETCORE_ENVIRONMENT = debugConfiguration.dockerRun.env.ASPNETCORE_ENVIRONMENT || 'Development';
+            //tslint:disable-next-line:no-http-string
+            debugConfiguration.dockerRun.env.ASPNETCORE_URLS = debugConfiguration.dockerRun.env.ASPNETCORE_URLS || 'http://+:80;https://+:443';
+        }
 
         return {
             containerName: debugConfiguration.dockerRun.containerName || `${appName}-dev`,
@@ -196,7 +189,7 @@ export class DockerDebugConfigurationProvider implements DebugConfigurationProvi
             os,
             ports: debugConfiguration.dockerRun.ports,
             volumes: DockerDebugConfigurationProvider.inferVolumes(folder, debugConfiguration),
-            configureSslCertificate: debugConfiguration.configureSslCertificate
+            configureSslCertificate: ssl
         };
     }
 
@@ -305,6 +298,28 @@ export class DockerDebugConfigurationProvider implements DebugConfigurationProvi
         }
 
         return dockerfile;
+    }
+
+    private async inferSsl(debugConfiguration: DockerDebugConfiguration, projectFile: string): Promise<boolean> {
+        if (debugConfiguration.configureSslCertificate !== undefined) {
+            return debugConfiguration.configureSslCertificate;
+        }
+
+        const launchSettingsPath = path.join(path.dirname(projectFile), 'Properties', 'launchSettings.json');
+        const launchSettingsString = await this.fsProvider.readFile(launchSettingsPath);
+        const launchSettings = JSON.parse(launchSettingsString);
+
+        //tslint:disable:no-unsafe-any
+        if (launchSettings && launchSettings.profiles instanceof Array) {
+            const projectProfile = launchSettings.profiles.find(p => p.commandName === 'Project');
+
+            if (projectProfile && projectProfile.applicationUrl && /https:\/\//i.test(projectProfile.applicationUrl)) {
+                return true;
+            }
+        }
+        //tslint:enable:no-unsafe-any
+
+        return false;
     }
 
     private createLaunchBrowserConfiguration(result: LaunchResult): DebugConfigurationBrowserOptions {

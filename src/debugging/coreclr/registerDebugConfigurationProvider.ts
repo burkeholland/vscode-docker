@@ -13,6 +13,7 @@ import { DockerDebugSessionManager } from './debugSessionManager';
 import DockerDebugConfigurationProvider from './dockerDebugConfigurationProvider';
 import { DefaultDockerManager } from './dockerManager';
 import { LocalFileSystemProvider } from './fsProvider';
+import LocalAspNetCoreSslManager from './LocalAspNetCoreSslManager';
 import LocalOSProvider from './LocalOSProvider';
 import { MsBuildNetCoreProjectProvider } from './netCoreProjectProvider';
 import OpnBrowserClient from './OpnBrowserClient';
@@ -28,6 +29,13 @@ export function registerDebugConfigurationProvider(ctx: vscode.ExtensionContext)
     const dockerClient = new CliDockerClient(processProvider);
     const osProvider = new LocalOSProvider();
     const dotNetClient = new CommandLineDotNetClient(processProvider, fileSystemProvider, osProvider);
+    const netCoreProjectProvider = new MsBuildNetCoreProjectProvider(
+        fileSystemProvider,
+        dotNetClient,
+        new OSTempFileProvider(
+            osProvider,
+            processProvider));
+    const aspNetCoreSslManager = new LocalAspNetCoreSslManager(dotNetClient, netCoreProjectProvider, processProvider, osProvider);
 
     const dockerOutputManager = new DefaultOutputManager(ext.outputChannel);
 
@@ -44,7 +52,7 @@ export function registerDebugConfigurationProvider(ctx: vscode.ExtensionContext)
                     osProvider,
                     processProvider)),
             dockerClient,
-            dotNetClient,
+            aspNetCoreSslManager,
             dockerOutputManager,
             fileSystemProvider,
             osProvider,
@@ -66,12 +74,7 @@ export function registerDebugConfigurationProvider(ctx: vscode.ExtensionContext)
                 dockerManager,
                 fileSystemProvider,
                 osProvider,
-                new MsBuildNetCoreProjectProvider(
-                    fileSystemProvider,
-                    dotNetClient,
-                    new OSTempFileProvider(
-                        osProvider,
-                        processProvider)),
+                netCoreProjectProvider,
                 new AggregatePrerequisite(
                     new DockerDaemonIsLinuxPrerequisite(
                         dockerClient,

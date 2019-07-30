@@ -3,11 +3,8 @@
  *--------------------------------------------------------*/
 
 import * as crypto from 'crypto';
-import * as os from 'os';
 import * as semver from 'semver';
-import { MessageItem } from 'vscode';
-import { DialogResponses, parseError } from 'vscode-azureextensionui';
-import { ext } from '../../extensionVariables';
+import { parseError } from 'vscode-azureextensionui';
 import { ProcessProvider } from "./ChildProcessProvider";
 import { FileSystemProvider } from "./fsProvider";
 import { OSProvider } from "./LocalOSProvider";
@@ -20,13 +17,11 @@ export type MSBuildExecOptions = {
 export interface DotNetClient {
     execTarget(projectFile: string, options?: MSBuildExecOptions): Promise<void>;
     getVersion(): Promise<string | undefined>;
-    trustAndExportSslCertificate(projectFile: string, hostExportPath: string): Promise<void>;
+    isCertificateTrusted(): Promise<boolean>;
+    exportCertificate(projectFile: string, certificateExportPath: string): Promise<void>;
 }
 
 export class CommandLineDotNetClient implements DotNetClient {
-    private static _KnownConfiguredProjects: Set<string> = new Set<string>();
-    private static _CertificateTrustedOrSkipped: boolean = false;
-
     constructor(
         private readonly processProvider: ProcessProvider,
         private readonly fsProvider: FileSystemProvider,
@@ -64,17 +59,27 @@ export class CommandLineDotNetClient implements DotNetClient {
         }
     }
 
-    public async trustAndExportSslCertificate(projectFile: string, hostExportPath: string): Promise<void> {
-        if (CommandLineDotNetClient._KnownConfiguredProjects.has(projectFile)) {
-            return;
+    public async isCertificateTrusted(): Promise<boolean | undefined> {
+        if (this.osProvider.os !== 'Windows' && !this.osProvider.isMac) {
+            // No centralized notion of trust on Linux
+            return undefined;
         }
 
-        await this.addUserSecretsIfNecessary(projectFile);
-        await this.promptAndTrustCertificateIfNecessary();
-        await this.exportAndSetPasswordIfNecessary(projectFile, hostExportPath);
+        try {
+            const checkCommand = `dotnet dev-certs https --check --trust`;
+            await this.processProvider.exec(checkCommand, {});
+            return true;
+        } catch (err) {
+            const error = parseError(err);
+            if (error.errorType === '6' || error.errorType === '7') {
+                return false;
+            } else { throw err; }
+        }
+    }
 
-        // Cache the project so we don't do this all over again every F5
-        CommandLineDotNetClient._KnownConfiguredProjects.add(projectFile);
+    public async exportCertificate(projectFile: string, certificateExportPath: string): Promise<void> {
+        await this.addUserSecretsIfNecessary(projectFile);
+        await this.exportCertificateAndSetPassword(projectFile, certificateExportPath);
     }
 
     private async addUserSecretsIfNecessary(projectFile: string): Promise<void> {
@@ -91,82 +96,16 @@ export class CommandLineDotNetClient implements DotNetClient {
         }
     }
 
-    private async promptAndTrustCertificateIfNecessary(): Promise<void> {
-        if (this.osProvider.os !== 'Windows' && !this.osProvider.isMac) {
-            // No centralized notion of trust on Linux
-            return;
-        }
+    private async exportCertificateAndSetPassword(projectFile: string, certificateExportPath: string): Promise<void> {
+        const password = this.getRandomHexString(32);
 
-        if (CommandLineDotNetClient._CertificateTrustedOrSkipped) {
-            return;
-        }
+        // Export the certificate
+        const exportCommand = `dotnet dev-certs https -ep "${certificateExportPath}" -p "${password}"`;
+        await this.processProvider.exec(exportCommand, {});
 
-        try {
-            const checkCommand = `dotnet dev-certs https --check --trust`;
-            await this.processProvider.exec(checkCommand, {});
-            CommandLineDotNetClient._CertificateTrustedOrSkipped = true;
-        } catch (err) {
-            const error = parseError(err);
-
-            if (error.errorType === '6' || error.errorType === '7') { // 6 = certificate not found, 7 = certificate not trusted
-                const trust: MessageItem = { title: 'Trust' };
-                const prompt = this.osProvider.os === 'Windows' ? 'A prompt may be shown.' : 'You may be prompted for your login password.';
-                const message = `The ASP.NET Core HTTPS development certificate is not trusted. Would you like to trust the certificate? ${prompt}`;
-
-                const selection = await ext.ui.showWarningMessage(
-                    message,
-                    { modal: true, learnMoreLink: 'https://aka.ms/vscode-docker-dev-certs' },
-                    trust, DialogResponses.skipForNow);
-
-                if (selection === trust) {
-                    const trustCommand = `${this.osProvider.os === 'Windows' ? '' : 'sudo -S '}dotnet dev-certs https --trust`;
-                    let attempts = 0;
-
-                    await this.processProvider.exec(trustCommand, {
-                        progress: async (output, process) => {
-                            if (this.osProvider.os === 'Windows') {
-                                return;
-                            }
-
-                            if (/Password:/i.test(output)) {
-                                const passwordPrompt = attempts++ < 1 ? 'Please enter your login password.' : 'Sorry, please enter your login password again.';
-                                const password = await ext.ui.showInputBox({ prompt: passwordPrompt, password: true });
-                                process.stdin.write(password);
-                                process.stdin.write(os.EOL);
-                            }
-                        }
-                    });
-
-                    CommandLineDotNetClient._CertificateTrustedOrSkipped = true;
-                } else {
-                    CommandLineDotNetClient._CertificateTrustedOrSkipped = true;
-                }
-            } else { throw err; }
-        }
-    }
-
-    private async exportAndSetPasswordIfNecessary(projectFile: string, hostExportPath: string): Promise<void> {
-        if (await this.fsProvider.fileExists(hostExportPath)) {
-            return;
-        }
-
-        try {
-            const password = this.getRandomHexString(32);
-
-            // Export the certificate
-            const exportCommand = `dotnet dev-certs https -ep "${hostExportPath}" -p "${password}"`;
-            await this.processProvider.exec(exportCommand, {});
-
-            // Set the password to dotnet user-secrets
-            const userSecretsPasswordCommand = `dotnet user-secrets --project "${projectFile}" set Kestrel:Certificates:Development:Password "${password}"`;
-            await this.processProvider.exec(userSecretsPasswordCommand, {});
-        } catch (err) {
-            if (await this.fsProvider.fileExists(hostExportPath)) {
-                await this.fsProvider.unlinkFile(hostExportPath);
-            }
-
-            throw err;
-        }
+        // Set the password to dotnet user-secrets
+        const userSecretsPasswordCommand = `dotnet user-secrets --project "${projectFile}" set Kestrel:Certificates:Development:Password "${password}"`;
+        await this.processProvider.exec(userSecretsPasswordCommand, {});
     }
 
     private getRandomHexString(length: number): string {
