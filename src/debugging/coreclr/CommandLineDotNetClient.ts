@@ -146,7 +146,7 @@ export class CommandLineDotNetClient implements DotNetClient {
     }
 
     private async exportAndSetPasswordIfNecessary(projectFile: string, hostExportPath: string): Promise<void> {
-        if (this.fsProvider.fileExists(hostExportPath)) {
+        if (await this.fsProvider.fileExists(hostExportPath)) {
             return;
         }
 
@@ -161,7 +161,7 @@ export class CommandLineDotNetClient implements DotNetClient {
             const userSecretsPasswordCommand = `dotnet user-secrets --project "${projectFile}" set Kestrel:Certificates:Development:Password "${password}"`;
             await this.processProvider.exec(userSecretsPasswordCommand, {});
         } catch (err) {
-            if (this.fsProvider.fileExists(hostExportPath)) {
+            if (await this.fsProvider.fileExists(hostExportPath)) {
                 await this.fsProvider.unlinkFile(hostExportPath);
             }
 
